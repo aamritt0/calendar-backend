@@ -1,12 +1,5 @@
 {
-  "name": "calendar-api",
-  "version": "1.0.0",
-  "type": "module",
   "dependencies": {
-    "node-fetch": "^3.3.2",
-    "ical": "^0.8.0"
-  },
-  "engines": {
-    "node": ">=18"
+    "node-fetch": "3.3.2"
   }
 }
