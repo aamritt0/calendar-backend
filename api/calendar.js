@@ -63,16 +63,25 @@ module.exports = async (req, res) => {
       }
     }
     
-    const keyword = (req.query.keyword || 'SCRUTINI').toString().toLowerCase();
+    const keyword = req.query.keyword && req.query.keyword.toString().trim() ? req.query.keyword.toString().toLowerCase() : null;
     const now = new Date();
+    // Set to start of today to include current day events
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     
     const filtered = events.filter(event => {
       if (!event.dtstart || !event.summary) return false;
       
-      const isFuture = event.dtstart >= now;
-      const matchesKeyword = event.summary.toLowerCase().includes(keyword);
+      // Include events from today onwards
+      const isFutureOrToday = event.dtstart >= today;
       
-      return isFuture && matchesKeyword;
+      // If no keyword provided, show all future/today events
+      if (!keyword) {
+        return isFutureOrToday;
+      }
+      
+      // If keyword provided, filter by keyword
+      const matchesKeyword = event.summary.toLowerCase().includes(keyword);
+      return isFutureOrToday && matchesKeyword;
     });
     
     // Sort by date
@@ -80,7 +89,7 @@ module.exports = async (req, res) => {
     
     return res.status(200).json({
       success: true,
-      keyword,
+      keyword: keyword || 'all events',
       count: filtered.length,
       events: filtered.map(event => ({
         summary: event.summary,
