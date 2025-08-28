@@ -1,14 +1,22 @@
 {
-  "name": "calendar-backend",
+  "name": "calendar-api",
   "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
   "dependencies": {
-    "ical": "^0.8.0",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^3.3.2",
+    "ical": "^0.8.0"
   },
   "devDependencies": {
-    "@types/ical": "^0.8.3",
-    "@types/node": "^20.5.7",
-    "@types/node-fetch": "^2.6.2",
-    "typescript": "^5.2.2"
+    "@vercel/node": "^3.0.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
