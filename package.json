@@ -1,0 +1,11 @@
+{
+  "name": "calendar-backend",
+  "version": "1.0.0",
+  "dependencies": {
+    "ical": "^0.8.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node-fetch": "^2.6.13"
+  }
+}
