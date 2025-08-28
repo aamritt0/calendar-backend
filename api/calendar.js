@@ -48,18 +48,10 @@ module.exports = async (req, res) => {
         currentEvent = null;
       } else if (currentEvent && trimmed.startsWith('SUMMARY:')) {
         currentEvent.summary = trimmed.substring(8);
-      } else if (currentEvent && trimmed.startsWith('DTSTART:')) {
-        const dateStr = trimmed.substring(8);
-        try {
-          // Handle different date formats
-          if (dateStr.includes('T')) {
-            currentEvent.dtstart = new Date(dateStr.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/, '$1-$2-$3T$4:$5:$6'));
-          } else {
-            currentEvent.dtstart = new Date(dateStr.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'));
-          }
-        } catch (e) {
-          // Skip if date parsing fails
-        }
+      } else if (currentEvent && trimmed.startsWith('DTSTART')) {
+        currentEvent.dtstart = parseICSDate(trimmed);
+      } else if (currentEvent && trimmed.startsWith('DTEND')) {
+        currentEvent.dtend = parseICSDate(trimmed);
       }
     }
     
