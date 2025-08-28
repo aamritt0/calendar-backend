@@ -1,4 +1,6 @@
-export default async function handler(req, res) {
+const fetch = require('node-fetch');
+
+module.exports = async (req, res) => {
   try {
     // Basic response first to test if function works
     if (req.query.test === 'true') {
@@ -8,8 +10,6 @@ export default async function handler(req, res) {
         env: process.env.CALENDAR_URL ? 'Environment variable found' : 'Environment variable missing'
       });
     }
-
-    const fetch = (await import('node-fetch')).default;
     
     const url = process.env.CALENDAR_URL;
     
@@ -98,4 +98,4 @@ export default async function handler(req, res) {
       message: error.message
     });
   }
-}
+};
