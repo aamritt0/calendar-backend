@@ -1,35 +1,27 @@
-import { VercelRequest, VercelResponse } from '@vercel/node';
-import fetch from 'node-fetch';
-import ical from 'ical';
+import { VercelRequest, VercelResponse } from "@vercel/node";
+import fetch from "node-fetch";
+import ical from "ical";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  try {
-    // Controlla che la variabile d'ambiente sia presente
-    const url = process.env.CALENDAR_URL;
-    if (!url) {
-      return res.status(500).json({ error: "Missing CALENDAR_URL environment variable" });
-    }
+  console.log("API called");
 
-    // Fetch del calendario ICS
+  try {
+    const url = process.env.CALENDAR_URL;
+    if (!url) throw new Error("Missing CALENDAR_URL");
+    console.log("URL:", url);
+
     const response = await fetch(url);
+    console.log("Fetch done, status:", response.status);
+
     const icsData = await response.text();
+    console.log("ICS length:", icsData.length);
 
     const events = ical.parseICS(icsData);
+    console.log("Events parsed:", Object.keys(events).length);
 
-    // Prendi keyword dalla query e assicurati che sia una stringa
-    const rawKeyword = req.query.keyword;
-    const keyword = Array.isArray(rawKeyword) ? rawKeyword[0] : rawKeyword || "";
-
-    // Filtra gli eventi in modo sicuro
-    const filtered = Object.values(events).filter((e: any) => {
-      return e.summary && typeof e.summary === "string" &&
-             e.summary.toLowerCase().includes(keyword.toLowerCase());
-    });
-
-    res.status(200).json(filtered);
-
+    res.status(200).json(Object.values(events));
   } catch (err) {
-    console.error(err);
+    console.error("Error:", err);
     res.status(500).json({ error: (err as Error).message });
   }
 }
