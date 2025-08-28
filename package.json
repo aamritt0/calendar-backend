@@ -2,16 +2,11 @@
   "name": "calendar-api",
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "vercel dev"
-  },
   "dependencies": {
     "node-fetch": "^3.3.2",
     "ical": "^0.8.0"
   },
-  "devDependencies": {
-    "@vercel/node": "^3.0.0"
-  },
   "engines": {
     "node": ">=18"
   }
+}
