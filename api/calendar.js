@@ -1,5 +1,44 @@
 const fetch = require('node-fetch');
 
+function parseICSDate(icsLine) {
+  // Handle DTSTART/DTEND with timezone info: DTSTART;TZID=Europe/Rome:20250130T090000
+  let dateStr;
+  if (icsLine.includes(':')) {
+    dateStr = icsLine.split(':')[1];
+  } else if (icsLine.includes('=')) {
+    // Handle DTSTART;VALUE=DATE:20250130
+    dateStr = icsLine.split('=').pop();
+  } else {
+    dateStr = icsLine.substring(8);
+  }
+  
+  try {
+    // Handle different date formats
+    if (dateStr.includes('T')) {
+      // Format: 20250130T090000 or 20250130T090000Z
+      const cleanDateStr = dateStr.replace('Z', '');
+      const year = cleanDateStr.substring(0, 4);
+      const month = cleanDateStr.substring(4, 6);
+      const day = cleanDateStr.substring(6, 8);
+      const hour = cleanDateStr.substring(9, 11) || '00';
+      const minute = cleanDateStr.substring(11, 13) || '00';
+      const second = cleanDateStr.substring(13, 15) || '00';
+      
+      return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+    } else {
+      // Format: 20250130 (all-day event)
+      const year = dateStr.substring(0, 4);
+      const month = dateStr.substring(4, 6);
+      const day = dateStr.substring(6, 8);
+      
+      return new Date(`${year}-${month}-${day}T00:00:00`);
+    }
+  } catch (e) {
+    console.error('Date parsing error:', e, 'for dateStr:', dateStr);
+    return null;
+  }
+}
+
 module.exports = async (req, res) => {
   try {
     // Basic response first to test if function works
@@ -85,8 +124,11 @@ module.exports = async (req, res) => {
       count: filtered.length,
       events: filtered.map(event => ({
         summary: event.summary,
-        date: event.dtstart.toISOString(),
-        dateFormatted: event.dtstart.toLocaleDateString('it-IT') + ' ' + event.dtstart.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+        startDate: event.dtstart.toISOString(),
+        endDate: event.dtend ? event.dtend.toISOString() : null,
+        startFormatted: event.dtstart.toLocaleDateString('it-IT') + ' ' + event.dtstart.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+        endFormatted: event.dtend ? event.dtend.toLocaleDateString('it-IT') + ' ' + event.dtend.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }) : null,
+        isAllDay: !event.dtend || (event.dtstart.getHours() === 0 && event.dtstart.getMinutes() === 0 && event.dtend.getHours() === 0 && event.dtend.getMinutes() === 0)
       }))
     });
 
