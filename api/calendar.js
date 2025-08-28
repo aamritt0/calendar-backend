@@ -2,6 +2,8 @@ const fetch = require('node-fetch');
 
 function parseICSDate(icsLine) {
   // Handle DTSTART/DTEND with timezone info: DTSTART;TZID=Europe/Rome:20250130T090000
+  console.log('Parsing ICS line:', icsLine); // Debug log
+  
   let dateStr;
   if (icsLine.includes(':')) {
     dateStr = icsLine.split(':')[1];
@@ -11,6 +13,8 @@ function parseICSDate(icsLine) {
   } else {
     dateStr = icsLine.substring(8);
   }
+  
+  console.log('Extracted dateStr:', dateStr); // Debug log
   
   try {
     // Handle different date formats
@@ -24,14 +28,18 @@ function parseICSDate(icsLine) {
       const minute = cleanDateStr.substring(11, 13) || '00';
       const second = cleanDateStr.substring(13, 15) || '00';
       
-      return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+      const parsedDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+      console.log('Parsed date with time:', parsedDate); // Debug log
+      return parsedDate;
     } else {
       // Format: 20250130 (all-day event)
       const year = dateStr.substring(0, 4);
       const month = dateStr.substring(4, 6);
       const day = dateStr.substring(6, 8);
       
-      return new Date(`${year}-${month}-${day}T00:00:00`);
+      const parsedDate = new Date(`${year}-${month}-${day}T00:00:00`);
+      console.log('Parsed date (all-day):', parsedDate); // Debug log
+      return parsedDate;
     }
   } catch (e) {
     console.error('Date parsing error:', e, 'for dateStr:', dateStr);
