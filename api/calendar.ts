@@ -1,34 +1,25 @@
-import fetch from "node-fetch";
-import ical from "ical";
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import fetch from 'node-fetch';
+import ical from 'ical';
 
-// Function executed when API is called
-export default async function handler(req: any, res: any) {
+export default async (req: VercelRequest, res: VercelResponse) => {
   try {
-    // Get keyword from query
-    const keyword = req.query.keyword as string;
-
-    // Fetch ICS calendar (from your school calendar URL)
-    const icsUrl = process.env.ICS_URL; // hidden in env variable
-
-    if (!icsUrl) {
-      throw new Error("ICS_URL environment variable is not set");
+    const url = process.env.CALENDAR_URL; // Environment Variable
+    if (!url) {
+      return res.status(500).json({ error: "Missing CALENDAR_URL" });
     }
-    
-    const response = await fetch(icsUrl);
-    const data = await response.text();
 
-    // Parse ICS
-    const events = ical.parseICS(data);
+    const response = await fetch(url);
+    const icsData = await response.text();
+    const events = ical.parseICS(icsData);
 
-    // Filter events
-    const filtered = Object.values(events).filter(
-      (event: any) =>
-        event.summary && keyword && event.summary.includes(keyword)
+    // Example: filter events with keyword "Math"
+    const filtered = Object.values(events).filter((e: any) =>
+      e.summary && e.summary.includes("Math")
     );
 
-    // Return filtered events
     res.status(200).json(filtered);
-  } catch (error) {
-    res.status(500).json({ error: "Something went wrong" });
+  } catch (err) {
+    res.status(500).json({ error: err.toString() });
   }
-}
+};
