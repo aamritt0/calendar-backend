@@ -2,8 +2,6 @@ const fetch = require('node-fetch');
 
 function parseICSDate(icsLine) {
   // Handle DTSTART/DTEND with timezone info
-  console.log('Parsing ICS line:', icsLine); // Debug log
-  
   let dateStr;
   let isUTC = false;
   let timezone = null;
@@ -26,8 +24,6 @@ function parseICSDate(icsLine) {
     dateStr = icsLine.substring(8);
   }
   
-  console.log('Extracted dateStr:', dateStr, 'isUTC:', isUTC, 'timezone:', timezone); // Debug log
-  
   try {
     if (dateStr.includes('T')) {
       // Format: 20250130T090000 or 20250130T090000Z
@@ -46,19 +42,12 @@ function parseICSDate(icsLine) {
         parsedDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
       } else if (timezone === 'Europe/Rome') {
         // Rome timezone - need to handle offset
-        // Create date assuming local time, then adjust for Rome timezone
         parsedDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
-        
-        // Rome is UTC+1 (winter) or UTC+2 (summer)
-        // For now, let's use a simple approach and assume UTC+1 (can be refined)
-        // Actually, let's just use the date as-is since it's already in local time
-        // and the display will handle the timezone conversion
       } else {
         // Local time
         parsedDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
       }
       
-      console.log('Parsed date with time:', parsedDate); // Debug log
       return parsedDate;
     } else {
       // Format: 20250130 (all-day event)
@@ -66,12 +55,10 @@ function parseICSDate(icsLine) {
       const month = dateStr.substring(4, 6);
       const day = dateStr.substring(6, 8);
       
-      const parsedDate = new Date(`${year}-${month}-${day}T00:00:00`);
-      console.log('Parsed date (all-day):', parsedDate); // Debug log
-      return parsedDate;
+      return new Date(`${year}-${month}-${day}T00:00:00`);
     }
   } catch (e) {
-    console.error('Date parsing error:', e, 'for dateStr:', dateStr);
+    console.error('Date parsing error for:', dateStr);
     return null;
   }
 }
@@ -107,10 +94,12 @@ module.exports = async (req, res) => {
     
     const icsData = await response.text();
     
-    // Simple text parsing instead of ical library for now
+    // Simple text parsing with early filtering for performance
     const lines = icsData.split('\n');
     const events = [];
     let currentEvent = null;
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     
     for (const line of lines) {
       const trimmed = line.trim();
@@ -119,38 +108,37 @@ module.exports = async (req, res) => {
         currentEvent = {};
       } else if (trimmed === 'END:VEVENT' && currentEvent) {
         if (currentEvent.summary && currentEvent.dtstart) {
-          events.push(currentEvent);
+          // Early filtering: only keep events from today onwards
+          if (currentEvent.dtstart >= today) {
+            events.push(currentEvent);
+          }
         }
         currentEvent = null;
       } else if (currentEvent && trimmed.startsWith('SUMMARY:')) {
         currentEvent.summary = trimmed.substring(8);
       } else if (currentEvent && trimmed.startsWith('DTSTART')) {
-        currentEvent.dtstart = parseICSDate(trimmed);
+        const parsedDate = parseICSDate(trimmed);
+        if (parsedDate && parsedDate.getFullYear() > 2020) { // Skip obviously old/corrupt dates
+          currentEvent.dtstart = parsedDate;
+        }
       } else if (currentEvent && trimmed.startsWith('DTEND')) {
-        currentEvent.dtend = parseICSDate(trimmed);
+        const parsedDate = parseICSDate(trimmed);
+        if (parsedDate && parsedDate.getFullYear() > 2020) { // Skip obviously old/corrupt dates
+          currentEvent.dtend = parsedDate;
+        }
       }
     }
     
     const keyword = req.query.keyword && req.query.keyword.toString().trim() ? req.query.keyword.toString().toLowerCase() : null;
-    const now = new Date();
-    // Set to start of today to include current day events
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     
-    const filtered = events.filter(event => {
-      if (!event.dtstart || !event.summary) return false;
-      
-      // Include events from today onwards
-      const isFutureOrToday = event.dtstart >= today;
-      
-      // If no keyword provided, show all future/today events
-      if (!keyword) {
-        return isFutureOrToday;
-      }
-      
-      // If keyword provided, filter by keyword
-      const matchesKeyword = event.summary.toLowerCase().includes(keyword);
-      return isFutureOrToday && matchesKeyword;
-    });
+    let filtered = events; // events are already filtered to today+ during parsing
+    
+    // Only apply keyword filter if provided
+    if (keyword) {
+      filtered = events.filter(event => 
+        event.summary.toLowerCase().includes(keyword)
+      );
+    }
     
     // Sort by date
     filtered.sort((a, b) => a.dtstart - b.dtstart);
