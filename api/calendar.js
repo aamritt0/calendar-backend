@@ -1,10 +1,10 @@
 const fetch = require('node-fetch');
 
-// Cache for calendar data
+// Cache for calendar data with longer TTL for resilience
 let calendarCache = {
   data: null,
   timestamp: 0,
-  ttl: 5 * 60 * 1000 // 5 minutes cache
+  ttl: 10 * 60 * 1000 // 10 minutes cache (increased for better resilience)
 };
 
 function parseICSDate(icsLine) {
@@ -124,49 +124,106 @@ module.exports = async (req, res) => {
     let events;
     const now = Date.now();
     
-    // Check cache first
+    // Check cache first (with extended stale cache tolerance)
     if (calendarCache.data && (now - calendarCache.timestamp) < calendarCache.ttl) {
       events = calendarCache.data;
+    } else if (calendarCache.data && (now - calendarCache.timestamp) < calendarCache.ttl * 3) {
+      // Use stale cache if it's not too old (within 30 minutes) and try to refresh in background
+      events = calendarCache.data;
+      console.log('Using stale cache while source is slow');
     } else {
-      // Fetch with timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      // Try multiple strategies for fetching
+      const fetchStrategies = [
+        { timeout: 5000, description: 'Fast fetch (5s)' },
+        { timeout: 15000, description: 'Standard fetch (15s)' },
+        { timeout: 25000, description: 'Extended fetch (25s)' }
+      ];
       
-      try {
-        const response = await fetch(url, { 
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Calendar-Parser/1.0'
+      let lastError = null;
+      
+      for (const strategy of fetchStrategies) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), strategy.timeout);
+        
+        try {
+          console.log(`Attempting ${strategy.description}...`);
+          const startTime = Date.now();
+          
+          const response = await fetch(url, { 
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'Calendar-Parser/1.0',
+              'Accept': 'text/calendar,text/plain,*/*',
+              'Connection': 'close'
+            },
+            timeout: strategy.timeout
+          });
+          
+          clearTimeout(timeoutId);
+          const fetchTime = Date.now() - startTime;
+          console.log(`Fetch completed in ${fetchTime}ms`);
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
           }
-        });
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-          return res.status(500).json({
-            success: false,
-            error: `Failed to fetch calendar: ${response.status} ${response.statusText}`
-          });
+          
+          const icsData = await response.text();
+          console.log(`Calendar data size: ${icsData.length} characters`);
+          
+          events = await parseCalendarData(icsData);
+          console.log(`Parsed ${events.length} events`);
+          
+          // Update cache with longer TTL if fetch was slow
+          const cacheTTL = fetchTime > 3000 ? 10 * 60 * 1000 : 5 * 60 * 1000; // 10 min if slow, 5 min if fast
+          calendarCache = {
+            data: events,
+            timestamp: now,
+            ttl: cacheTTL
+          };
+          
+          break; // Success, exit the retry loop
+          
+        } catch (fetchError) {
+          clearTimeout(timeoutId);
+          lastError = fetchError;
+          
+          if (fetchError.name === 'AbortError') {
+            console.log(`${strategy.description} timed out`);
+            continue; // Try next strategy
+          } else {
+            console.error(`${strategy.description} failed:`, fetchError.message);
+            // For non-timeout errors, try the next strategy but also consider it might not be a timeout issue
+            if (strategy.timeout === 25000) {
+              // This was our last attempt
+              break;
+            }
+            continue;
+          }
         }
-        
-        const icsData = await response.text();
-        events = await parseCalendarData(icsData);
-        
-        // Update cache
-        calendarCache = {
-          data: events,
-          timestamp: now,
-          ttl: calendarCache.ttl
-        };
-        
-      } catch (fetchError) {
-        clearTimeout(timeoutId);
-        if (fetchError.name === 'AbortError') {
-          return res.status(408).json({
-            success: false,
-            error: 'Request timeout - calendar source is taking too long to respond'
-          });
+      }
+      
+      // If we get here and events is still undefined, all strategies failed
+      if (!events) {
+        // If we have old cached data, use it as fallback
+        if (calendarCache.data && calendarCache.data.length > 0) {
+          console.log('Using stale cache data as fallback');
+          events = calendarCache.data;
+        } else {
+          // No cache available, return error
+          if (lastError?.name === 'AbortError') {
+            return res.status(408).json({
+              success: false,
+              error: 'Calendar source is consistently slow or unresponsive. Please try again later.',
+              details: 'All fetch attempts (5s, 15s, 25s) timed out'
+            });
+          } else {
+            return res.status(500).json({
+              success: false,
+              error: 'Failed to fetch calendar data',
+              details: lastError?.message || 'Unknown fetch error'
+            });
+          }
         }
-        throw fetchError;
       }
     }
     
