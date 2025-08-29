@@ -1,81 +1,119 @@
 const fetch = require('node-fetch');
 
+// Cache for calendar data
+let calendarCache = {
+  data: null,
+  timestamp: 0,
+  ttl: 5 * 60 * 1000 // 5 minutes cache
+};
+
 function parseICSDate(icsLine) {
-  // Handle DTSTART/DTEND with timezone info
-  let dateStr;
-  let isUTC = false;
-  let timezone = null;
+  // Extract date string more efficiently
+  const colonIndex = icsLine.indexOf(':');
+  if (colonIndex === -1) return null;
   
-  if (icsLine.includes('TZID=Europe/Rome:')) {
-    // Format: DTSTART;TZID=Europe/Rome:20140221T143000
-    dateStr = icsLine.split('TZID=Europe/Rome:')[1];
-    timezone = 'Europe/Rome';
-  } else if (icsLine.includes(':') && icsLine.endsWith('Z')) {
-    // Format: DTSTART:20150219T143000Z (UTC)
-    dateStr = icsLine.split(':')[1];
-    isUTC = true;
-  } else if (icsLine.includes(':')) {
-    // Format: DTSTART:20150219T143000 (local time)
-    dateStr = icsLine.split(':')[1];
-  } else if (icsLine.includes('=')) {
-    // Handle DTSTART;VALUE=DATE:20250130
-    dateStr = icsLine.split('=').pop();
-  } else {
-    dateStr = icsLine.substring(8);
+  let dateStr = icsLine.substring(colonIndex + 1);
+  const isUTC = dateStr.endsWith('Z');
+  
+  // Handle timezone info
+  const tzidIndex = icsLine.indexOf('TZID=');
+  if (tzidIndex !== -1) {
+    const tzStart = icsLine.indexOf(':', tzidIndex);
+    if (tzStart !== -1) {
+      dateStr = icsLine.substring(tzStart + 1);
+    }
   }
+  
+  if (!dateStr || dateStr.length < 8) return null;
   
   try {
     if (dateStr.includes('T')) {
-      // Format: 20250130T090000 or 20250130T090000Z
+      // DateTime format: 20250130T090000 or 20250130T090000Z
       const cleanDateStr = dateStr.replace('Z', '');
-      const year = cleanDateStr.substring(0, 4);
-      const month = cleanDateStr.substring(4, 6);
-      const day = cleanDateStr.substring(6, 8);
-      const hour = cleanDateStr.substring(9, 11) || '00';
-      const minute = cleanDateStr.substring(11, 13) || '00';
-      const second = cleanDateStr.substring(13, 15) || '00';
+      if (cleanDateStr.length < 15) return null;
       
-      let parsedDate;
+      const year = parseInt(cleanDateStr.substr(0, 4), 10);
+      const month = parseInt(cleanDateStr.substr(4, 2), 10) - 1; // Month is 0-based
+      const day = parseInt(cleanDateStr.substr(6, 2), 10);
+      const hour = parseInt(cleanDateStr.substr(9, 2), 10);
+      const minute = parseInt(cleanDateStr.substr(11, 2), 10);
+      const second = parseInt(cleanDateStr.substr(13, 2), 10) || 0;
       
-      if (isUTC || dateStr.endsWith('Z')) {
-        // UTC time - parse as is
-        parsedDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
-      } else if (timezone === 'Europe/Rome') {
-        // Rome timezone - need to handle offset
-        parsedDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+      if (isUTC) {
+        return new Date(Date.UTC(year, month, day, hour, minute, second));
       } else {
-        // Local time
-        parsedDate = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+        return new Date(year, month, day, hour, minute, second);
       }
-      
-      return parsedDate;
     } else {
-      // Format: 20250130 (all-day event)
-      const year = dateStr.substring(0, 4);
-      const month = dateStr.substring(4, 6);
-      const day = dateStr.substring(6, 8);
-      
-      return new Date(`${year}-${month}-${day}T00:00:00`);
+      // Date only format: 20250130
+      if (dateStr.length < 8) return null;
+      const year = parseInt(dateStr.substr(0, 4), 10);
+      const month = parseInt(dateStr.substr(4, 2), 10) - 1;
+      const day = parseInt(dateStr.substr(6, 2), 10);
+      return new Date(year, month, day);
     }
   } catch (e) {
-    console.error('Date parsing error for:', dateStr);
     return null;
   }
 }
 
+async function parseCalendarData(icsData) {
+  const lines = icsData.split(/\r?\n/);
+  const events = [];
+  let currentEvent = null;
+  
+  // Pre-calculate today for filtering
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  
+  // Use a more efficient parsing approach
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    if (line === 'BEGIN:VEVENT') {
+      currentEvent = {};
+    } else if (line === 'END:VEVENT') {
+      if (currentEvent && currentEvent.summary && currentEvent.dtstart) {
+        // Only add events from today onwards
+        if (currentEvent.dtstart >= today) {
+          events.push(currentEvent);
+        }
+      }
+      currentEvent = null;
+    } else if (currentEvent) {
+      if (line.startsWith('SUMMARY:')) {
+        currentEvent.summary = line.substring(8);
+      } else if (line.startsWith('DTSTART')) {
+        const date = parseICSDate(line);
+        if (date && date.getFullYear() > 2020) {
+          currentEvent.dtstart = date;
+        }
+      } else if (line.startsWith('DTEND')) {
+        const date = parseICSDate(line);
+        if (date && date.getFullYear() > 2020) {
+          currentEvent.dtend = date;
+        }
+      }
+      // Skip other properties for performance
+    }
+  }
+  
+  return events;
+}
+
 module.exports = async (req, res) => {
   try {
-    // Basic response first to test if function works
+    // Test endpoint
     if (req.query.test === 'true') {
       return res.status(200).json({
         success: true,
         message: 'Function is working',
-        env: process.env.CALENDAR_URL ? 'Environment variable found' : 'Environment variable missing'
+        env: process.env.CALENDAR_URL ? 'Environment variable found' : 'Environment variable missing',
+        cache: calendarCache.data ? 'Cache populated' : 'Cache empty'
       });
     }
     
     const url = process.env.CALENDAR_URL;
-    
     if (!url) {
       return res.status(400).json({
         success: false,
@@ -83,78 +121,117 @@ module.exports = async (req, res) => {
       });
     }
 
-    const response = await fetch(url);
+    let events;
+    const now = Date.now();
     
-    if (!response.ok) {
-      return res.status(500).json({
-        success: false,
-        error: `Failed to fetch calendar: ${response.status}`
-      });
-    }
-    
-    const icsData = await response.text();
-    
-    // Simple text parsing with early filtering for performance
-    const lines = icsData.split('\n');
-    const events = [];
-    let currentEvent = null;
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
-    for (const line of lines) {
-      const trimmed = line.trim();
+    // Check cache first
+    if (calendarCache.data && (now - calendarCache.timestamp) < calendarCache.ttl) {
+      events = calendarCache.data;
+    } else {
+      // Fetch with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
       
-      if (trimmed === 'BEGIN:VEVENT') {
-        currentEvent = {};
-      } else if (trimmed === 'END:VEVENT' && currentEvent) {
-        if (currentEvent.summary && currentEvent.dtstart) {
-          // Early filtering: only keep events from today onwards
-          if (currentEvent.dtstart >= today) {
-            events.push(currentEvent);
+      try {
+        const response = await fetch(url, { 
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Calendar-Parser/1.0'
           }
+        });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          return res.status(500).json({
+            success: false,
+            error: `Failed to fetch calendar: ${response.status} ${response.statusText}`
+          });
         }
-        currentEvent = null;
-      } else if (currentEvent && trimmed.startsWith('SUMMARY:')) {
-        currentEvent.summary = trimmed.substring(8);
-      } else if (currentEvent && trimmed.startsWith('DTSTART')) {
-        const parsedDate = parseICSDate(trimmed);
-        if (parsedDate && parsedDate.getFullYear() > 2020) { // Skip obviously old/corrupt dates
-          currentEvent.dtstart = parsedDate;
+        
+        const icsData = await response.text();
+        events = await parseCalendarData(icsData);
+        
+        // Update cache
+        calendarCache = {
+          data: events,
+          timestamp: now,
+          ttl: calendarCache.ttl
+        };
+        
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          return res.status(408).json({
+            success: false,
+            error: 'Request timeout - calendar source is taking too long to respond'
+          });
         }
-      } else if (currentEvent && trimmed.startsWith('DTEND')) {
-        const parsedDate = parseICSDate(trimmed);
-        if (parsedDate && parsedDate.getFullYear() > 2020) { // Skip obviously old/corrupt dates
-          currentEvent.dtend = parsedDate;
-        }
+        throw fetchError;
       }
     }
     
-    const keyword = req.query.keyword && req.query.keyword.toString().trim() ? req.query.keyword.toString().toLowerCase() : null;
+    // Apply keyword filter if provided
+    const keyword = req.query.keyword?.toString().trim().toLowerCase();
+    let filtered = events;
     
-    let filtered = events; // events are already filtered to today+ during parsing
-    
-    // Only apply keyword filter if provided
     if (keyword) {
       filtered = events.filter(event => 
         event.summary.toLowerCase().includes(keyword)
       );
     }
     
-    // Sort by date
-    filtered.sort((a, b) => a.dtstart - b.dtstart);
+    // Sort by date (events are already roughly sorted during parsing)
+    filtered.sort((a, b) => a.dtstart.getTime() - b.dtstart.getTime());
+    
+    // Limit results for performance
+    const limit = parseInt(req.query.limit) || 100;
+    if (filtered.length > limit) {
+      filtered = filtered.slice(0, limit);
+    }
+    
+    // Format response
+    const formattedEvents = filtered.map(event => {
+      const startDate = event.dtstart;
+      const endDate = event.dtend;
+      const isAllDay = !endDate || 
+        (startDate.getHours() === 0 && startDate.getMinutes() === 0 && 
+         endDate.getHours() === 0 && endDate.getMinutes() === 0);
+      
+      return {
+        summary: event.summary,
+        startDate: startDate.toISOString(),
+        endDate: endDate?.toISOString() || null,
+        startFormatted: startDate.toLocaleDateString('it-IT', { 
+          timeZone: 'Europe/Rome',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        }) + (isAllDay ? '' : ' ' + startDate.toLocaleTimeString('it-IT', { 
+          hour: '2-digit', 
+          minute: '2-digit', 
+          timeZone: 'Europe/Rome' 
+        })),
+        endFormatted: endDate && !isAllDay ? 
+          endDate.toLocaleDateString('it-IT', { 
+            timeZone: 'Europe/Rome',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          }) + ' ' + endDate.toLocaleTimeString('it-IT', { 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            timeZone: 'Europe/Rome' 
+          }) : null,
+        isAllDay
+      };
+    });
     
     return res.status(200).json({
       success: true,
       keyword: keyword || 'all events',
       count: filtered.length,
-      events: filtered.map(event => ({
-        summary: event.summary,
-        startDate: event.dtstart.toISOString(),
-        endDate: event.dtend ? event.dtend.toISOString() : null,
-        startFormatted: event.dtstart.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' }) + ' ' + event.dtstart.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }),
-        endFormatted: event.dtend ? event.dtend.toLocaleDateString('it-IT', { timeZone: 'Europe/Rome' }) + ' ' + event.dtend.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }) : null,
-        isAllDay: !event.dtend || (event.dtstart.getHours() === 0 && event.dtstart.getMinutes() === 0 && event.dtend.getHours() === 0 && event.dtend.getMinutes() === 0)
-      }))
+      cached: (now - calendarCache.timestamp) < calendarCache.ttl,
+      events: formattedEvents
     });
 
   } catch (error) {
